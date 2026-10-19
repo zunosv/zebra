@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diseñador de etiquetas</title>
+<style id="pg"></style>
+<style>
+:root{--bg:#eceef1;--card:#fff;--fg:#1a1a1a;--mut:#666;--bd:#d0d0d0;--ac:#0b5fff;--ok:#0a7d33;--er:#c62828}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1e1e1e;--fg:#eee;--mut:#aaa;--bd:#444;--ac:#4c8dff;--ok:#4cc16f;--er:#ff6b6b}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{display:flex;flex-direction:column;font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--bd)}
+.bar.pie{border-top:1px solid var(--bd);border-bottom:0}
+h1{font-size:15px;margin:0 8px 0 0;display:flex;align-items:center;gap:6px}
+button{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;font-size:13px;color:var(--fg);background:var(--card);border:1px solid var(--bd);border-radius:6px;cursor:pointer}
+button.pri{color:#fff;background:var(--ac);border-color:var(--ac);font-weight:600;padding:8px 16px}
+button:disabled{opacity:.6}
+input,select{padding:6px 8px;font-size:14px;color:var(--fg);background:var(--card);border:1px solid var(--bd);border-radius:6px;min-width:0}
+.sep{width:1px;height:24px;background:var(--bd)}
+.mini{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--mut)}
+.mini input{width:62px}
+.wrap{flex:1;min-height:0;display:grid;grid-template-columns:1fr 250px}
+#stage{overflow:auto;padding:16px;display:flex;justify-content:center;align-items:flex-start}
+#cv{touch-action:none;box-shadow:0 2px 10px rgba(0,0,0,.25);line-height:0}
+#props{overflow:auto;padding:12px;background:var(--card);border-left:1px solid var(--bd)}
+#props h2{font-size:13px;margin:0 0 10px}
+#props label{display:block;font-size:12px;color:var(--mut);margin-bottom:8px}
+#props input:not([type=checkbox]),#props select{display:block;width:100%;margin-top:3px}
+#props .ck{display:flex;align-items:center;gap:6px}
+#props .g2{display:flex;gap:8px}
+.hint{color:var(--mut);font-size:13px}
+#estado{font-size:13px;margin-left:auto}
+#estado.ok{color:var(--ok)}#estado.error{color:var(--er)}
+#hoja{display:none}
+@media (max-width:760px){.wrap{grid-template-columns:1fr;grid-template-rows:1fr auto}#props{border-left:0;border-top:1px solid var(--bd);max-height:38vh}}
+@media print{
+  html,body{height:auto;background:#fff}
+  body>*:not(#hoja){display:none!important}
+  #hoja{display:block}
+  .et{page-break-after:always;break-after:page;overflow:hidden}
+  .et:last-child{page-break-after:auto;break-after:auto}
+}
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1><i data-ic="print"></i>Diseñador de etiquetas</h1>
+  <button data-add="text"><i data-ic="text"></i>Texto</button>
+  <button data-add="barcode"><i data-ic="barcode"></i>Código de barras</button>
+  <button data-add="rect"><i data-ic="rect"></i>Recuadro</button>
+  <span class="sep"></span>
+  <button id="dup"><i data-ic="copy"></i>Duplicar</button>
+  <button id="del"><i data-ic="trash"></i>Eliminar</button>
+  <span class="sep"></span>
+  <span class="mini">Etiqueta <input id="W" type="number" min="10" max="104" step="1" inputmode="numeric"> x <input id="H" type="number" min="10" max="300" step="1" inputmode="numeric"> mm</span>
+  <select id="dpi" title="Resolución"><option value="8">203 dpi</option><option value="12">300 dpi</option></select>
+  <span class="sep"></span>
+  <select id="tpls" title="Plantillas"><option value="">Plantillas...</option></select>
+  <button id="guardar"><i data-ic="save"></i>Guardar</button>
+  <button id="borrar" title="Borrar plantilla seleccionada"><i data-ic="trash"></i></button>
+</div>
+<div class="wrap">
+  <div id="stage"><div id="cv"></div></div>
+  <aside id="props"></aside>
+</div>
+<div class="bar pie">
+  <select id="modo"><option value="dialogo">Diálogo de Chrome</option><option value="usb">USB directo (ZPL)</option></select>
+  <button id="buscar" style="display:none"><i data-ic="search"></i>Buscar Zebra</button>
+  <span id="impresora" class="hint" style="display:none">sin seleccionar</span>
+  <span class="mini">Copias <input id="copias" type="number" min="1" max="999" value="1" inputmode="numeric"></span>
+  <button id="imprimir" class="pri"><i data-ic="print"></i>Imprimir</button>
+  <span id="estado" role="status"></span>
+</div>
+<div id="hoja"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ZEBRA_VID = 0x0A5F;
+/* ---------- Code 128 (set B) ---------- */
+const C128 = ('212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112').split(' ');
+
+function patronesABars(digitos) {
+  const bars = []; let x = 0;
+  [...digitos].forEach((d, i) => { const w = +d; if (i % 2 === 0) bars.push([x, w]); x += w; });
+  return { bars, ancho: x };
+}
+
+function code128(txt) {
+  const vals = [104];
+  for (const ch of txt) {
+    const c = ch.charCodeAt(0);
+    if (c < 32 || c > 126) throw new Error('Code 128 admite solo caracteres ASCII simples (sin acentos ni ñ).');
+    vals.push(c - 32);
+  }
+  let suma = 104;
+  for (let i = 1; i < vals.length; i++) suma += i * vals[i];
+  vals.push(suma % 103, 106);
+  return { ...patronesABars(vals.map(v => C128[v]).join('')), quiet: 10, texto: txt };
+}
+
+/* ---------- EAN-13 ---------- */
+const EL = '0001101 0011001 0010011 0111101 0100011 0110001 0101111 0111011 0110111 0001011'.split(' ');
+const EG = '0100111 0110011 0011011 0100001 0011101 0111001 0000101 0010001 0001001 0010111'.split(' ');
+const EP = 'LLLLLL LLGLGG LLGGLG LLGGGL LGLLGG LGGLLG LGGGLL LGLGLG LGLGGL LGGLGL'.split(' ');
+
+function ean13(txt) {
+  if (!/^\d{12,13}$/.test(txt)) throw new Error('EAN-13 requiere 12 o 13 dígitos.');
+  const d12 = txt.slice(0, 12);
+  let s = 0; for (let i = 0; i < 12; i++) s += +d12[i] * (i % 2 ? 3 : 1);
+  const chk = (10 - s % 10) % 10;
+  if (txt.length === 13 && +txt[12] !== chk) throw new Error('Dígito verificador incorrecto (debería ser ' + chk + ').');
+  const n = d12 + chk;
+  let bits = '101';
+  for (let i = 1; i <= 6; i++) bits += (EP[+n[0]][i - 1] === 'L' ? EL : EG)[+n[i]];
+  bits += '01010';
+  for (let i = 7; i <= 12; i++) bits += EL[+n[i]].replace(/./g, c => c === '1' ? '0' : '1');
+  bits += '101';
+  const bars = []; let i = 0;
+  while (i < bits.length) { let j = i; while (bits[j] === bits[i]) j++; if (bits[i] === '1') bars.push([i, j - i]); i = j; }
+  return { bars, ancho: bits.length, quiet: 9, texto: n };
+}
+
+
+/* ---------- Iconos SVG ---------- */
+const IC = {
+  text: '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>',
+  barcode: '<path d="M3 5v14M6 5v14M10 5v14M13 5v14M17 5v14M21 5v14"/>',
+  rect: '<rect x="3" y="5" width="18" height="14" rx="1"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="1"/><path d="M5 15V5h10"/>',
+  save: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  print: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>'
+};
+document.querySelectorAll('[data-ic]').forEach(e => e.insertAdjacentHTML('afterbegin',
+  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[e.dataset.ic]}</svg>`));
+
+/* ---------- Estado ---------- */
+let S = { W: 50, H: 30, dpi: 8, objs: [] }, sel = null, K = 6, nid = 1, drag = null, usbDev = null;
+const ls = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k)); localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} return null; };
+const estado = (m, c) => { $('estado').textContent = m; $('estado').className = c || ''; };
+const cur = () => S.objs.find(o => o.id === sel);
+const num = (v, d) => { const n = parseFloat(v); return isNaN(n) ? d : n; };
+const snap = v => Math.max(0, Math.round(v * 2) / 2);
+
+function nuevo() {
+  S.objs = [
+    { id: nid++, type: 'text', x: 3, y: 2, text: 'Producto', size: 4, bold: true },
+    { id: nid++, type: 'barcode', x: 3, y: 9, kind: '128', text: '7501234567890', h: 14, mod: 2, hr: true }
+  ];
+}
+const guardado = ls('dis_cur');
+if (guardado && guardado.objs) { S = guardado; nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; } else nuevo();
+
+/* ---------- Dibujo ---------- */
+function objSvg(o) {
+  if (o.type === 'text')
+    return `<text x="${o.x}" y="${o.y + o.size * 0.8}" font-size="${o.size}" font-weight="${o.bold ? 700 : 400}" shape-rendering="auto">${esc(o.text)}</text>`;
+  if (o.type === 'rect')
+    return `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="rgba(0,0,0,0)" stroke="#000" stroke-width="${o.t}"/>`;
+  try {
+    const cod = o.kind === 'ean13' ? ean13(o.text) : code128(o.text);
+    const mod = o.mod / S.dpi;
+    const r = cod.bars.map(([x, w]) => `<rect x="${(o.x + x * mod).toFixed(4)}" y="${o.y}" width="${(w * mod).toFixed(4)}" height="${o.h}"/>`).join('');
+    const t = o.hr ? `<text x="${o.x + cod.ancho * mod / 2}" y="${o.y + o.h + 3}" font-size="3" text-anchor="middle" shape-rendering="auto">${esc(cod.texto)}</text>` : '';
+    return r + t;
+  } catch (e) {
+    return `<text x="${o.x}" y="${o.y + 3}" font-size="2.6" fill="#c62828" shape-rendering="auto">${esc(e.message)}</text>`;
+  }
+}
+
+function svgLabel(screen) {
+  const w = screen ? S.W * K + 'px' : S.W + 'mm', h = screen ? S.H * K + 'px' : S.H + 'mm';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${S.W} ${S.H}" font-family="Arial,sans-serif" fill="#000" shape-rendering="crispEdges" style="background:#fff;display:block"><rect width="${S.W}" height="${S.H}" fill="#fff"/>${S.objs.map(o => `<g data-id="${o.id}">${objSvg(o)}</g>`).join('')}</svg>`;
+}
+
+function render() {
+  K = Math.max(2, Math.min(9, ($('stage').clientWidth - 32) / S.W));
+  $('cv').innerHTML = svgLabel(true);
+  if (sel !== null) {
+    const g = $('cv').querySelector(`[data-id="${sel}"]`);
+    if (g) {
+      const b = g.getBBox();
+      g.parentNode.insertAdjacentHTML('beforeend', `<rect x="${b.x - .5}" y="${b.y - .5}" width="${b.width + 1}" height="${b.height + 1}" fill="none" stroke="#0b5fff" stroke-width="1.5" stroke-dasharray="4 3" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+    }
+  }
+  ls('dis_cur', S);
+}
+
+/* ---------- Propiedades ---------- */
+const XY = [['x', 'X (mm)', 'number'], ['y', 'Y (mm)', 'number']];
+const CAMPOS = {
+  text: [['text', 'Texto', 'text'], ['size', 'Tamaño (mm)', 'number'], ['bold', 'Negrita', 'check'], ...XY],
+  barcode: [['kind', 'Tipo', 'select'], ['text', 'Contenido', 'text'], ['h', 'Alto barras (mm)', 'number'], ['mod', 'Ancho módulo (puntos)', 'number'], ['hr', 'Mostrar texto', 'check'], ...XY],
+  rect: [['w', 'Ancho (mm)', 'number'], ['h', 'Alto (mm)', 'number'], ['t', 'Grosor (mm)', 'number'], ...XY]
+};
+const NOMBRES = { text: 'Texto', barcode: 'Código de barras', rect: 'Recuadro' };
+
+function renderProps() {
+  const o = cur();
+  if (!o) { $('props').innerHTML = '<p class="hint">Agrega un objeto con los botones de arriba, o haz clic en uno de la etiqueta para editarlo. Arrastra para moverlo.</p>'; return; }
+  const campo = ([k, l, t]) => {
+    const id = `id="p_${k}" data-k="${k}"`;
+    if (t === 'check') return `<label class="ck"><input type="checkbox" ${id} ${o[k] ? 'checked' : ''}>${l}</label>`;
+    if (t === 'select') return `<label>${l}<select ${id}><option value="128" ${o[k] === '128' ? 'selected' : ''}>Code 128</option><option value="ean13" ${o[k] === 'ean13' ? 'selected' : ''}>EAN-13</option></select></label>`;
+    return `<label>${l}<input ${id} type="${t}" ${t === 'number' ? 'step="0.5" min="0"' : ''} value="${esc(o[k])}"></label>`;
+  };
+  const f = CAMPOS[o.type], xy = f.slice(-2);
+  $('props').innerHTML = `<h2>${NOMBRES[o.type]}</h2>${f.slice(0, -2).map(campo).join('')}<div class="g2">${xy.map(campo).join('')}</div>`;
+}
+
+$('props').addEventListener('input', e => {
+  const o = cur(), k = e.target.dataset.k; if (!o || !k) return;
+  const t = e.target.type;
+  o[k] = t === 'checkbox' ? e.target.checked : t === 'number' ? num(e.target.value, 0) : e.target.value;
+  if (k === 'mod') o.mod = Math.max(1, Math.round(o.mod));
+  render();
+});
+
+/* ---------- Objetos ---------- */
+function agregar(tipo) {
+  const o = { id: nid++, type: tipo, x: 3, y: 3 };
+  if (tipo === 'text') Object.assign(o, { text: 'Texto', size: 4, bold: false });
+  if (tipo === 'barcode') Object.assign(o, { kind: '128', text: '123456789', h: 12, mod: 2, hr: true });
+  if (tipo === 'rect') Object.assign(o, { w: 20, h: 10, t: 0.4 });
+  S.objs.push(o); seleccionar(o.id);
+}
+function seleccionar(id) { sel = id; renderProps(); render(); }
+function quitar() { if (sel === null) return; S.objs = S.objs.filter(o => o.id !== sel); sel = null; renderProps(); render(); }
+
+document.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => agregar(b.dataset.add)));
+$('del').addEventListener('click', quitar);
+$('dup').addEventListener('click', () => {
+  const o = cur(); if (!o) return;
+  const c = { ...o, id: nid++, x: o.x + 2, y: o.y + 2 }; S.objs.push(c); seleccionar(c.id);
+});
+
+/* ---------- Arrastrar ---------- */
+$('cv').addEventListener('pointerdown', e => {
+  const g = e.target.closest('[data-id]');
+  if (!g) { seleccionar(null); return; }
+  const id = +g.dataset.id, o = S.objs.find(x => x.id === id);
+  if (id !== sel) seleccionar(id);
+  drag = { sx: e.clientX, sy: e.clientY, ox: o.x, oy: o.y };
+  $('cv').setPointerCapture(e.pointerId);
+});
+$('cv').addEventListener('pointermove', e => {
+  const o = cur(); if (!drag || !o) return;
+  o.x = snap(drag.ox + (e.clientX - drag.sx) / K);
+  o.y = snap(drag.oy + (e.clientY - drag.sy) / K);
+  if ($('p_x')) { $('p_x').value = o.x; $('p_y').value = o.y; }
+  render();
+});
+['pointerup', 'pointercancel'].forEach(n => $('cv').addEventListener(n, () => { drag = null; }));
+
+document.addEventListener('keydown', e => {
+  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const o = cur(); if (!o) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { quitar(); e.preventDefault(); return; }
+  const d = { ArrowLeft: [-.5, 0], ArrowRight: [.5, 0], ArrowUp: [0, -.5], ArrowDown: [0, .5] }[e.key];
+  if (d) { o.x = Math.max(0, o.x + d[0]); o.y = Math.max(0, o.y + d[1]); renderProps(); render(); e.preventDefault(); }
+});
+
+/* ---------- Etiqueta y plantillas ---------- */
+function sincronizar() {
+  $('W').value = S.W; $('H').value = S.H; $('dpi').value = S.dpi;
+}
+$('W').addEventListener('input', () => { S.W = Math.max(10, num($('W').value, 50)); render(); });
+$('H').addEventListener('input', () => { S.H = Math.max(10, num($('H').value, 30)); render(); });
+$('dpi').addEventListener('change', () => { S.dpi = +$('dpi').value; render(); });
+window.addEventListener('resize', render);
+
+function listarPlantillas(sel_) {
+  const t = ls('dis_tpl') || {};
+  $('tpls').innerHTML = '<option value="">Plantillas...</option>' + Object.keys(t).map(n => `<option ${n === sel_ ? 'selected' : ''}>${esc(n)}</option>`).join('');
+}
+$('guardar').addEventListener('click', () => {
+  const n = (prompt('Nombre de la plantilla:', $('tpls').value) || '').trim(); if (!n) return;
+  const t = ls('dis_tpl') || {}; t[n] = JSON.parse(JSON.stringify(S)); ls('dis_tpl', t);
+  listarPlantillas(n); estado('Plantilla guardada.', 'ok');
+});
+$('tpls').addEventListener('change', () => {
+  const t = (ls('dis_tpl') || {})[$('tpls').value]; if (!t) return;
+  S = JSON.parse(JSON.stringify(t)); nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; sel = null;
+  sincronizar(); renderProps(); render();
+});
+$('borrar').addEventListener('click', () => {
+  const n = $('tpls').value; if (!n || !confirm('¿Borrar la plantilla "' + n + '"?')) return;
+  const t = ls('dis_tpl') || {}; delete t[n]; ls('dis_tpl', t); listarPlantillas();
+});
+
+/* ---------- Impresión ---------- */
+function imprimirDialogo(copias) {
+  const svg = svgLabel(false);
+  $('pg').textContent = `@page{size:${S.W}mm ${S.H}mm;margin:0}@media print{.et{width:${S.W}mm;height:${S.H}mm}}`;
+  $('hoja').innerHTML = Array.from({ length: copias }, () => `<div class="et">${svg}</div>`).join('');
+  window.print();
+}
+
+const lz = t => String(t).replace(/[\^~\\]/g, '');
+function generarZPL(copias) {
+  const d = S.dpi, r = v => Math.round(v * d);
+  let z = `^XA\n^CI28\n^PW${r(S.W)}\n^LL${r(S.H)}\n^LH0,0\n`;
+  for (const o of S.objs) {
+    if (o.type === 'text') z += `^FO${r(o.x)},${r(o.y)}^A0N,${r(o.size)},${r(o.size)}^FD${lz(o.text)}^FS\n`;
+    else if (o.type === 'rect') z += `^FO${r(o.x)},${r(o.y)}^GB${r(o.w)},${r(o.h)},${Math.max(1, r(o.t))}^FS\n`;
+    else {
+      const hb = r(o.h), ean = o.kind === 'ean13';
+      z += `^BY${o.mod},3,${hb}\n^FO${r(o.x)},${r(o.y)}` + (ean ? `^BEN,${hb},${o.hr ? 'Y' : 'N'}` : `^BCN,${hb},${o.hr ? 'Y' : 'N'},N,N`) + `^FD${lz(ean ? o.text.slice(0, 12) : o.text)}^FS\n`;
+    }
+  }
+  return z + `^PQ${copias},0,1,N\n^XZ`;
+}
+
+async function enviarUSB(dev, zpl) {
+  await dev.open();
+  try {
+    if (!dev.configuration) await dev.selectConfiguration(1);
+    let iface = null, ep = null, alt = 0;
+    for (const i of dev.configuration.interfaces) for (const a of i.alternates) {
+      const out = a.endpoints.find(e => e.direction === 'out');
+      if (a.interfaceClass === 7 && out) { iface = i.interfaceNumber; ep = out.endpointNumber; alt = a.alternateSetting; }
+    }
+    if (iface === null) throw new Error('No se encontró la interfaz de impresión.');
+    await dev.claimInterface(iface);
+    try {
+      if (alt) await dev.selectAlternateInterface(iface, alt);
+      const r = await dev.transferOut(ep, new TextEncoder().encode(zpl));
+      if (r.status !== 'ok') throw new Error('Estado de transferencia: ' + r.status);
+    } finally { await dev.releaseInterface(iface).catch(() => {}); }
+  } finally { await dev.close().catch(() => {}); }
+}
+
+
+
+function elegir(dev) {
+  usbDev = dev;
+  $('impresora').textContent = dev ? `${dev.productName || 'Zebra'} (USB)` : 'sin seleccionar';
+}
+$('buscar').addEventListener('click', async () => {
+  if (!navigator.usb) return estado('Este navegador no soporta WebUSB. Usa Chrome.', 'error');
+  try { elegir(await navigator.usb.requestDevice({ filters: [{ vendorId: ZEBRA_VID }] })); estado('Impresora seleccionada.', 'ok'); }
+  catch (e) { if (e.name !== 'NotFoundError') estado('Error: ' + e.message, 'error'); }
+});
+
+function aplicarModo() {
+  const u = $('modo').value === 'usb';
+  $('buscar').style.display = u ? '' : 'none'; $('impresora').style.display = u ? '' : 'none';
+  ls('dis_modo', $('modo').value);
+}
+$('modo').addEventListener('change', aplicarModo);
+
+$('imprimir').addEventListener('click', async () => {
+  const copias = Math.max(1, Math.min(999, parseInt($('copias').value, 10) || 1));
+  if (!S.objs.length) return estado('La etiqueta está vacía.', 'error');
+  if ($('modo').value === 'dialogo') { estado(''); return imprimirDialogo(copias); }
+  if (!usbDev) return estado('Pulsa "Buscar Zebra" primero.', 'error');
+  $('imprimir').disabled = true; estado('Enviando...');
+  try { await enviarUSB(usbDev, generarZPL(copias)); estado(`Enviado (${copias}).`, 'ok'); }
+  catch (e) {
+    estado(/claim|access denied|in use/i.test(e.message)
+      ? 'El driver de Zebra bloquea el USB. Usa el modo Diálogo o cambia el driver a WinUSB (Zadig).'
+      : 'Error: ' + e.message, 'error');
+  } finally { $('imprimir').disabled = false; }
+});
+
+/* ---------- Inicio ---------- */
+$('modo').value = ls('dis_modo') || 'dialogo';
+sincronizar(); listarPlantillas(); aplicarModo(); renderProps(); render();
+if (navigator.usb) navigator.usb.getDevices().then(l => { const z = l.find(d => d.vendorId === ZEBRA_VID); if (z) elegir(z); });
+</script>
+</body>
+</html>
