@@ -55,6 +55,7 @@ input,select{padding:6px 8px;font-size:14px;color:var(--fg);background:var(--car
   <button id="del"><i data-ic="trash"></i>Eliminar</button>
   <span class="sep"></span>
   <span class="mini">Etiqueta <input id="W" type="number" min="10" max="104" step="1" inputmode="numeric"> x <input id="H" type="number" min="10" max="300" step="1" inputmode="numeric"> mm</span>
+  <span class="mini">Por fila <select id="cols"><option>1</option><option>2</option><option>3</option></select> Sep. <input id="gap" type="number" min="0" max="20" step="0.5" inputmode="decimal"> Izq. <input id="ml" type="number" min="0" max="20" step="0.5" inputmode="decimal"> mm</span>
   <select id="dpi" title="Resolución"><option value="8">203 dpi</option><option value="12">300 dpi</option></select>
   <span class="sep"></span>
   <select id="tpls" title="Plantillas"><option value="">Plantillas...</option></select>
@@ -138,7 +139,7 @@ document.querySelectorAll('[data-ic]').forEach(e => e.insertAdjacentHTML('afterb
   `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[e.dataset.ic]}</svg>`));
 
 /* ---------- Estado ---------- */
-let S = { W: 50, H: 30, dpi: 8, objs: [] }, sel = null, K = 6, nid = 1, drag = null, usbDev = null;
+let S = { W: 50, H: 30, dpi: 8, cols: 1, gap: 3, ml: 0, objs: [] }, sel = null, K = 6, nid = 1, drag = null, usbDev = null;
 const ls = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k)); localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} return null; };
 const estado = (m, c) => { $('estado').textContent = m; $('estado').className = c || ''; };
 const cur = () => S.objs.find(o => o.id === sel);
@@ -152,7 +153,7 @@ function nuevo() {
   ];
 }
 const guardado = ls('dis_cur');
-if (guardado && guardado.objs) { S = guardado; nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; } else nuevo();
+if (guardado && guardado.objs) { S = Object.assign({ cols: 1, gap: 3, ml: 0 }, guardado); nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; } else nuevo();
 
 /* ---------- Dibujo ---------- */
 function objSvg(o) {
@@ -265,11 +266,14 @@ document.addEventListener('keydown', e => {
 
 /* ---------- Etiqueta y plantillas ---------- */
 function sincronizar() {
-  $('W').value = S.W; $('H').value = S.H; $('dpi').value = S.dpi;
+  $('W').value = S.W; $('H').value = S.H; $('dpi').value = S.dpi; $('cols').value = S.cols; $('gap').value = S.gap; $('ml').value = S.ml;
 }
 $('W').addEventListener('input', () => { S.W = Math.max(10, num($('W').value, 50)); render(); });
 $('H').addEventListener('input', () => { S.H = Math.max(10, num($('H').value, 30)); render(); });
 $('dpi').addEventListener('change', () => { S.dpi = +$('dpi').value; render(); });
+$('cols').addEventListener('change', () => { S.cols = +$('cols').value; ls('dis_cur', S); });
+$('gap').addEventListener('input', () => { S.gap = Math.max(0, num($('gap').value, 0)); ls('dis_cur', S); });
+$('ml').addEventListener('input', () => { S.ml = Math.max(0, num($('ml').value, 0)); ls('dis_cur', S); });
 window.addEventListener('resize', render);
 
 function listarPlantillas(sel_) {
@@ -283,7 +287,7 @@ $('guardar').addEventListener('click', () => {
 });
 $('tpls').addEventListener('change', () => {
   const t = (ls('dis_tpl') || {})[$('tpls').value]; if (!t) return;
-  S = JSON.parse(JSON.stringify(t)); nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; sel = null;
+  S = Object.assign({ cols: 1, gap: 3, ml: 0 }, JSON.parse(JSON.stringify(t))); nid = Math.max(0, ...S.objs.map(o => o.id)) + 1; sel = null;
   sincronizar(); renderProps(); render();
 });
 $('borrar').addEventListener('click', () => {
@@ -292,26 +296,40 @@ $('borrar').addEventListener('click', () => {
 });
 
 /* ---------- Impresión ---------- */
+const rowW = () => S.ml + S.cols * S.W + (S.cols - 1) * S.gap;
 function imprimirDialogo(copias) {
-  const svg = svgLabel(false);
-  $('pg').textContent = `@page{size:${S.W}mm ${S.H}mm;margin:0}@media print{.et{width:${S.W}mm;height:${S.H}mm}}`;
-  $('hoja').innerHTML = Array.from({ length: copias }, () => `<div class="et">${svg}</div>`).join('');
+  const svg = svgLabel(false), rows = Math.ceil(copias / S.cols);
+  $('pg').textContent = `@page{size:${rowW()}mm ${S.H}mm;margin:0}@media print{.et{width:${rowW()}mm;height:${S.H}mm;display:flex;gap:${S.gap}mm;padding-left:${S.ml}mm;box-sizing:border-box}.et svg{flex:none}}`;
+  $('hoja').innerHTML = Array.from({ length: rows }, (_, i) => `<div class="et">${svg.repeat(Math.min(S.cols, copias - i * S.cols))}</div>`).join('');
   window.print();
 }
 
 const lz = t => String(t).replace(/[\^~\\]/g, '');
-function generarZPL(copias) {
+function campos(off) {
   const d = S.dpi, r = v => Math.round(v * d);
-  let z = `^XA\n^CI28\n^PW${r(S.W)}\n^LL${r(S.H)}\n^LH0,0\n`;
+  let z = '';
   for (const o of S.objs) {
-    if (o.type === 'text') z += `^FO${r(o.x)},${r(o.y)}^A0N,${r(o.size)},${r(o.size)}^FD${lz(o.text)}^FS\n`;
-    else if (o.type === 'rect') z += `^FO${r(o.x)},${r(o.y)}^GB${r(o.w)},${r(o.h)},${Math.max(1, r(o.t))}^FS\n`;
+    const x = r(o.x + off);
+    if (o.type === 'text') z += `^FO${x},${r(o.y)}^A0N,${r(o.size)},${r(o.size)}^FD${lz(o.text)}^FS\n`;
+    else if (o.type === 'rect') z += `^FO${x},${r(o.y)}^GB${r(o.w)},${r(o.h)},${Math.max(1, r(o.t))}^FS\n`;
     else {
       const hb = r(o.h), ean = o.kind === 'ean13';
-      z += `^BY${o.mod},3,${hb}\n^FO${r(o.x)},${r(o.y)}` + (ean ? `^BEN,${hb},${o.hr ? 'Y' : 'N'}` : `^BCN,${hb},${o.hr ? 'Y' : 'N'},N,N`) + `^FD${lz(ean ? o.text.slice(0, 12) : o.text)}^FS\n`;
+      z += `^BY${o.mod},3,${hb}\n^FO${x},${r(o.y)}` + (ean ? `^BEN,${hb},${o.hr ? 'Y' : 'N'}` : `^BCN,${hb},${o.hr ? 'Y' : 'N'},N,N`) + `^FD${lz(ean ? o.text.slice(0, 12) : o.text)}^FS\n`;
     }
   }
-  return z + `^PQ${copias},0,1,N\n^XZ`;
+  return z;
+}
+function generarZPL(copias) {
+  const r = v => Math.round(v * S.dpi), full = Math.floor(copias / S.cols), rem = copias % S.cols;
+  const fila = n => {
+    let z = `^XA\n^CI28\n^PW${r(rowW())}\n^LL${r(S.H)}\n^LH0,0\n`;
+    for (let i = 0; i < n; i++) z += campos(S.ml + i * (S.W + S.gap));
+    return z;
+  };
+  let z = '';
+  if (full) z += fila(S.cols) + `^PQ${full},0,1,N\n^XZ\n`;
+  if (rem) z += fila(rem) + '^XZ\n';
+  return z;
 }
 
 async function enviarUSB(dev, zpl) {
@@ -355,6 +373,7 @@ $('modo').addEventListener('change', aplicarModo);
 $('imprimir').addEventListener('click', async () => {
   const copias = Math.max(1, Math.min(999, parseInt($('copias').value, 10) || 1));
   if (!S.objs.length) return estado('La etiqueta está vacía.', 'error');
+  if (rowW() > 104) return estado(`El ancho de la fila (${rowW()} mm) supera los 104 mm de la ZD420.`, 'error');
   if ($('modo').value === 'dialogo') { estado(''); return imprimirDialogo(copias); }
   if (!usbDev) return estado('Pulsa "Buscar Zebra" primero.', 'error');
   $('imprimir').disabled = true; estado('Enviando...');
